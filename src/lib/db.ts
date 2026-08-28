@@ -3,7 +3,9 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 
-const dbPath = path.join(process.cwd(), 'postsnag.db');
+const dbPath = process.env.VERCEL
+  ? path.join('/tmp', 'postsnag.db')
+  : path.join(process.cwd(), 'postsnag.db');
 
 let db: Database.Database;
 
