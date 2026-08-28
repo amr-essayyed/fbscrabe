@@ -14,12 +14,13 @@ import {
   Upload,
   Puzzle,
   FileSpreadsheet,
-  FileJson
+  FileJson,
+  Globe
 } from 'lucide-react';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'explorer' | 'selected';
-  setActiveTab: (tab: 'dashboard' | 'explorer' | 'selected') => void;
+  activeTab: 'dashboard' | 'pages' | 'explorer' | 'selected';
+  setActiveTab: (tab: 'dashboard' | 'pages' | 'explorer' | 'selected') => void;
   onOpenCreateModal: () => void;
   onOpenSettings: () => void;
   onOpenCollectorGuide: () => void;
@@ -28,6 +29,7 @@ interface HeaderProps {
   isAnalyzing: boolean;
   totalPosts: number;
   selectedCount: number;
+  pagesCount: number;
 }
 
 export function Header({
@@ -40,7 +42,8 @@ export function Header({
   onBatchAnalyze,
   isAnalyzing,
   totalPosts,
-  selectedCount
+  selectedCount,
+  pagesCount
 }: HeaderProps) {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -89,6 +92,21 @@ export function Header({
           >
             <LayoutDashboard className="h-4 w-4" />
             <span>Dashboard</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('pages')}
+            className={`flex items-center space-x-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all ${
+              activeTab === 'pages'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <Globe className="h-4 w-4" />
+            <span>Pages</span>
+            <span className="ml-1 rounded-full bg-slate-800 px-2 py-0.5 text-xs font-semibold text-slate-300">
+              {pagesCount}
+            </span>
           </button>
 
           <button
@@ -216,13 +234,23 @@ export function Header({
         </button>
 
         <button
+          onClick={() => setActiveTab('pages')}
+          className={`flex items-center space-x-1 text-xs font-medium ${
+            activeTab === 'pages' ? 'text-indigo-400' : 'text-slate-400'
+          }`}
+        >
+          <Globe className="h-4 w-4" />
+          <span>Pages</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('explorer')}
           className={`flex items-center space-x-1 text-xs font-medium ${
             activeTab === 'explorer' ? 'text-indigo-400' : 'text-slate-400'
           }`}
         >
           <Layers className="h-4 w-4" />
-          <span>All Posts ({totalPosts})</span>
+          <span>All ({totalPosts})</span>
         </button>
 
         <button

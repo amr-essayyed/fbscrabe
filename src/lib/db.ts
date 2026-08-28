@@ -28,6 +28,7 @@ function initDb(database: Database.Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       url TEXT NOT NULL UNIQUE,
+      categories TEXT DEFAULT '[]',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -65,6 +66,13 @@ function initDb(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_posts_ad_score ON posts(ad_score);
     CREATE INDEX IF NOT EXISTS idx_posts_text_hash ON posts(text_hash);
   `);
+
+  // Migration: add categories column to pages if it doesn't exist (for existing DBs)
+  try {
+    database.exec(`ALTER TABLE pages ADD COLUMN categories TEXT DEFAULT '[]'`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
 
   // Check if we need to seed initial sample data
   const countRow = database.prepare('SELECT COUNT(*) as count FROM posts').get() as { count: number };

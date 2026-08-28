@@ -5,7 +5,8 @@ export async function analyzePostWithAI(
   postText: string,
   reactions: number = 0,
   comments: number = 0,
-  shares: number = 0
+  shares: number = 0,
+  customCategories?: string[]
 ): Promise<AIAnalysisResult> {
   const db = getDb();
   
@@ -18,14 +19,14 @@ export async function analyzePostWithAI(
 
   if (apiKey && apiKey.trim().length > 0) {
     try {
-      return await callOpenRouterAPI(apiKey, model, postText, reactions, comments, shares);
+      return await callOpenRouterAPI(apiKey, model, postText, reactions, comments, shares, customCategories);
     } catch (err) {
       console.warn('OpenRouter API call failed, falling back to rule-based engine:', err);
     }
   }
 
   // Fallback Rule-Based Engine
-  return analyzePostWithRules(postText, reactions, comments, shares);
+  return analyzePostWithRules(postText, reactions, comments, shares, customCategories);
 }
 
 async function callOpenRouterAPI(
@@ -34,7 +35,8 @@ async function callOpenRouterAPI(
   postText: string,
   reactions: number,
   comments: number,
-  shares: number
+  shares: number,
+  customCategories?: string[]
 ): Promise<AIAnalysisResult> {
   const prompt = `You are an expert Meta (Facebook) Paid Ads Specialist & Direct Response Copywriter.
 Analyze the following Facebook post to determine if it is a strong candidate for turning into a paid advertisement.
@@ -59,8 +61,10 @@ Evaluate the post across these criteria:
 7. CTA clarity
 8. Conversion potential
 
-CATEGORIES (pick exactly ONE primary category):
-"Product", "Promotion / Offer", "Educational", "Testimonial", "Customer Story", "Brand / Awareness", "Announcement", "Event", "Entertainment", "Question / Engagement", "Other"
+CATEGORIES (pick exactly ONE primary category from the list below):
+${customCategories && customCategories.length > 0
+  ? customCategories.map(c => `"${c}"`).join(', ')
+  : '"Product", "Promotion / Offer", "Educational", "Testimonial", "Customer Story", "Brand / Awareness", "Announcement", "Event", "Entertainment", "Question / Engagement", "Other"'}
 
 CHARACTERISTICS (boolean flags):
 has_product, has_offer, has_discount, has_cta, has_price, has_testimonial, has_customer_problem, has_solution, has_emotional_appeal, has_social_proof, has_urgency, has_educational_value, has_strong_hook
@@ -133,7 +137,8 @@ export function analyzePostWithRules(
   postText: string,
   reactions: number = 0,
   comments: number = 0,
-  shares: number = 0
+  shares: number = 0,
+  customCategories?: string[]
 ): AIAnalysisResult {
   const lower = postText.toLowerCase();
 
@@ -154,25 +159,28 @@ export function analyzePostWithRules(
     has_strong_hook: /^([🔥🚨⚡️💡"”\?]|tired of|stop|here's|why|how|are you|don't)/i.test(postText.trim())
   };
 
-  // Determine Category
-  let category: PostCategory = 'Other';
-  if (characteristics.has_testimonial) {
+  // Determine Category — restricted to customCategories if provided
+  const categoryAllowed = (cat: string): boolean =>
+    !customCategories || customCategories.length === 0 || customCategories.includes(cat);
+
+  let category: string = (customCategories && customCategories.length > 0) ? customCategories[0] : 'Other';
+  if (categoryAllowed('Testimonial') && characteristics.has_testimonial) {
     category = 'Testimonial';
-  } else if (characteristics.has_offer || characteristics.has_discount) {
+  } else if (categoryAllowed('Promotion / Offer') && (characteristics.has_offer || characteristics.has_discount)) {
     category = 'Promotion / Offer';
-  } else if (characteristics.has_educational_value) {
+  } else if (categoryAllowed('Educational') && characteristics.has_educational_value) {
     category = 'Educational';
-  } else if (characteristics.has_product) {
+  } else if (categoryAllowed('Product') && characteristics.has_product) {
     category = 'Product';
-  } else if (/question|\?|what is your|comment below|drop your|poll/i.test(lower)) {
+  } else if (categoryAllowed('Question / Engagement') && /question|\?|what is your|comment below|drop your|poll/i.test(lower)) {
     category = 'Question / Engagement';
-  } else if (/announcing|new release|launch|we're excited|update/i.test(lower)) {
+  } else if (categoryAllowed('Announcement') && /announcing|new release|launch|we're excited|update/i.test(lower)) {
     category = 'Announcement';
-  } else if (/story|my journey|behind the scenes|started when/i.test(lower)) {
+  } else if (categoryAllowed('Customer Story') && /story|my journey|behind the scenes|started when/i.test(lower)) {
     category = 'Customer Story';
-  } else if (/event|live|webinar|workshop|join us/i.test(lower)) {
+  } else if (categoryAllowed('Event') && /event|live|webinar|workshop|join us/i.test(lower)) {
     category = 'Event';
-  } else if (characteristics.has_emotional_appeal) {
+  } else if (categoryAllowed('Brand / Awareness') && characteristics.has_emotional_appeal) {
     category = 'Brand / Awareness';
   }
 
@@ -254,7 +262,7 @@ export function analyzePostWithRules(
     suggested_improvement: !characteristics.has_cta
       ? 'Add a direct landing page link and high-converting Call-To-Action (e.g., "Shop Now & Save 20%").'
       : 'Optimize graphic/video creative for mobile square (1:1) or vertical (4:5) ad formats.',
-    category,
+    category: category as PostCategory,
     characteristics,
     evaluated_at: new Date().toISOString()
   };

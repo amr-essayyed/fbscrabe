@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { PostRecord, DashboardStats, PostStatus } from '@/lib/types';
+import { PostRecord, PageRecord, DashboardStats, PostStatus } from '@/lib/types';
 import { Header } from '@/components/Header';
 import { DashboardOverview } from '@/components/DashboardOverview';
 import { PostsExplorer } from '@/components/PostsExplorer';
+import { PagesView } from '@/components/PagesView';
 import { PostDetailModal } from '@/components/PostDetailModal';
 import { CreatePostModal } from '@/components/CreatePostModal';
 import { SettingsModal } from '@/components/SettingsModal';
@@ -12,8 +13,9 @@ import { CollectorGuideModal } from '@/components/CollectorGuideModal';
 import { Sparkles, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'explorer' | 'selected'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pages' | 'explorer' | 'selected'>('dashboard');
   const [posts, setPosts] = useState<PostRecord[]>([]);
+  const [pages, setPages] = useState<PageRecord[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [selectedPost, setSelectedPost] = useState<PostRecord | null>(null);
   
@@ -36,26 +38,25 @@ export default function Home() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load Posts & Dashboard Stats
+  // Load Posts, Pages & Dashboard Stats
   const fetchData = useCallback(async () => {
     try {
-      const [postsRes, statsRes] = await Promise.all([
+      const [postsRes, statsRes, pagesRes] = await Promise.all([
         fetch('/api/posts'),
-        fetch('/api/stats')
+        fetch('/api/stats'),
+        fetch('/api/pages')
       ]);
 
       const postsData = await postsRes.json();
       const statsData = await statsRes.json();
+      const pagesData = await pagesRes.json();
 
-      if (postsData.success) {
-        setPosts(postsData.posts || []);
-      }
-      if (statsData.success) {
-        setStats(statsData.stats || null);
-      }
+      if (postsData.success) setPosts(postsData.posts || []);
+      if (statsData.success) setStats(statsData.stats || null);
+      if (pagesData.success) setPages(pagesData.pages || []);
     } catch (err: any) {
       console.error('Error fetching data:', err);
-      showToast('Failed to load posts from database', 'error');
+      showToast('Failed to load data from database', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -105,7 +106,7 @@ export default function Home() {
           setSelectedPost((prev) => prev ? { ...prev, status: newStatus } : null);
         }
         showToast(`Post #${postId} marked as ${newStatus}`);
-        fetchData(); // refresh stats counters
+        fetchData();
       }
     } catch (err) {
       showToast('Failed to update status', 'error');
@@ -207,6 +208,63 @@ export default function Home() {
     }
   };
 
+  // ——— Page CRUD Handlers ———
+  const handleAddPage = async (name: string, url: string, categories: string[]) => {
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, url, categories })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Page "${name}" added!`);
+        await fetchData();
+      } else {
+        showToast(data.error || 'Failed to add page', 'error');
+      }
+    } catch {
+      showToast('Failed to add page', 'error');
+    }
+  };
+
+  const handleUpdatePage = async (
+    pageId: number,
+    updates: { name?: string; url?: string; categories?: string[] }
+  ) => {
+    try {
+      const res = await fetch(`/api/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Page settings saved!');
+        await fetchData();
+      } else {
+        showToast(data.error || 'Failed to save page', 'error');
+      }
+    } catch {
+      showToast('Failed to save page', 'error');
+    }
+  };
+
+  const handleDeletePage = async (pageId: number) => {
+    try {
+      const res = await fetch(`/api/pages/${pageId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Page and its posts deleted.');
+        await fetchData();
+      } else {
+        showToast(data.error || 'Failed to delete page', 'error');
+      }
+    } catch {
+      showToast('Failed to delete page', 'error');
+    }
+  };
+
   const selectedPostsCount = posts.filter((p) => p.status === 'Selected').length;
 
   return (
@@ -224,6 +282,7 @@ export default function Home() {
         isAnalyzing={isAnalyzing}
         totalPosts={posts.length}
         selectedCount={selectedPostsCount}
+        pagesCount={pages.length}
       />
 
       {/* Main Content Area */}
@@ -240,7 +299,21 @@ export default function Home() {
           />
         )}
 
-        {/* Tab 2: All Posts Explorer */}
+        {/* Tab 2: Pages — per-page isolated views */}
+        {activeTab === 'pages' && (
+          <PagesView
+            pages={pages}
+            posts={posts}
+            isLoading={isLoading}
+            onSelectPost={(post) => setSelectedPost(post)}
+            onUpdateStatus={handleUpdateStatus}
+            onAddPage={handleAddPage}
+            onUpdatePage={handleUpdatePage}
+            onDeletePage={handleDeletePage}
+          />
+        )}
+
+        {/* Tab 3: All Posts Explorer */}
         {activeTab === 'explorer' && (
           <PostsExplorer
             posts={posts}
@@ -251,7 +324,7 @@ export default function Home() {
           />
         )}
 
-        {/* Tab 3: Selected Ad Candidates */}
+        {/* Tab 4: Selected Ad Candidates */}
         {activeTab === 'selected' && (
           <div className="space-y-4">
             <div className="rounded-2xl glass-panel p-5 flex items-center justify-between border-l-4 border-l-emerald-500">
@@ -325,7 +398,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-slate-800/80 bg-slate-950 py-4 text-center text-xs text-slate-500">
-        <p>PostSnag Intelligence System • Built with Next.js & Better-SQLite3</p>
+        <p>PostSnag Intelligence System • Built with Next.js &amp; Better-SQLite3</p>
       </footer>
     </div>
   );

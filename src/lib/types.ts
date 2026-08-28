@@ -54,6 +54,8 @@ export interface PageRecord {
   id: number;
   name: string;
   url: string;
+  categories: string[]; // custom AI categories configured for this page
+  post_count?: number;
   created_at: string;
 }
 

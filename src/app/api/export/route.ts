@@ -6,18 +6,27 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const format = searchParams.get('format') || 'json'; // 'json' | 'csv'
     const status = searchParams.get('status');
+    const pageId = searchParams.get('page_id');
 
     const db = getDb();
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (status && status !== 'All') {
+      conditions.push('p.status = ?');
+      params.push(status);
+    }
+    if (pageId) {
+      conditions.push('p.page_id = ?');
+      params.push(Number(pageId));
+    }
+
     let query = `
       SELECT p.*, pg.name as page_name, pg.url as page_url
       FROM posts p
       LEFT JOIN pages pg ON p.page_id = pg.id
+      ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
     `;
-    const params: any[] = [];
-    if (status && status !== 'All') {
-      query += ' WHERE p.status = ?';
-      params.push(status);
-    }
     query += ' ORDER BY p.id DESC';
 
     const rawPosts = db.prepare(query).all(...params) as any[];

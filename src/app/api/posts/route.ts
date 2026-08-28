@@ -101,8 +101,23 @@ export async function POST(request: Request) {
     const textHash = generateTextHash(text);
     const fbUrl = facebook_url || `https://facebook.com/post/${Date.now()}`;
 
-    // Auto AI analyze on create
-    const aiResult = await analyzePostWithAI(text, reactions || 0, comments || 0, shares || 0);
+    // Fetch page's custom categories if page exists
+    let pageCategories: string[] = [];
+    if (pageId) {
+      const pgRow = db.prepare('SELECT categories FROM pages WHERE id = ?').get(pageId) as { categories: string } | undefined;
+      if (pgRow?.categories) {
+        try { pageCategories = JSON.parse(pgRow.categories); } catch { /* ignore */ }
+      }
+    }
+
+    // Auto AI analyze on create — use page-specific categories when available
+    const aiResult = await analyzePostWithAI(
+      text,
+      reactions || 0,
+      comments || 0,
+      shares || 0,
+      pageCategories.length > 0 ? pageCategories : undefined
+    );
 
     const stmt = db.prepare(`
       INSERT INTO posts (
