@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PostSnag Collector</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      background-color: #090d16;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-b: 1px solid #1e293b;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      color: white;
+      font-size: 16px;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+    .title { font-size: 15px; font-weight: 700; color: #ffffff; }
+    .subtitle { font-size: 11px; color: #94a3b8; }
+    
+    .card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    
+    .count-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .count-label { font-size: 12px; font-weight: 600; color: #94a3b8; }
+    .count-value { font-size: 22px; font-weight: 800; color: #38bdf8; }
+
+    .btn {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+      margin-bottom: 8px;
+    }
+    .btn-primary { background: #4f46e5; color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); }
+    .btn-primary:hover { background: #4338ca; }
+    
+    .btn-purple { background: #7c3aed; color: white; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3); }
+    .btn-purple:hover { background: #6d28d9; }
+
+    .btn-success { background: #10b981; color: white; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
+    .btn-success:hover { background: #059669; }
+
+    .btn-outline { background: transparent; border: 1px solid #334155; color: #cbd5e1; }
+    .btn-outline:hover { background: #1e293b; color: white; }
+
+    .btn-danger { background: transparent; border: 1px solid #991b1b; color: #f87171; }
+    .btn-danger:hover { background: #450a0a; }
+
+    .server-input {
+      width: 100%;
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-family: monospace;
+      margin-top: 4px;
+    }
+    
+    .status-msg {
+      font-size: 11px;
+      text-align: center;
+      margin-top: 8px;
+      min-height: 16px;
+      color: #10b981;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">
+      <div class="logo">⚡</div>
+      <div>
+        <div class="title">PostSnag Collector</div>
+        <div class="subtitle">FB Paid Ad Scraper</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="count-row">
+      <span class="count-label">Buffer Queue</span>
+      <span id="postCount" class="count-value">0 posts</span>
+    </div>
+  </div>
+
+  <button id="scanBtn" class="btn btn-primary">
+    ⚡ Scan Current Page Posts
+  </button>
+
+  <button id="autoScrollBtn" class="btn btn-purple">
+    🔄 Start Auto-Scroll & Collect
+  </button>
+
+  <button id="sendBtn" class="btn btn-success">
+    🚀 Send to Dashboard
+  </button>
+
+  <div class="card" style="margin-top: 10px; margin-bottom: 10px;">
+    <label style="font-size: 11px; font-weight: 600; color: #94a3b8; display: block; margin-bottom: 2px;">
+      PostSnag Server URL
+    </label>
+    <input type="text" id="serverUrl" class="server-input" value="http://localhost:3000" />
+  </div>
+
+  <button id="clearBtn" class="btn btn-danger" style="margin-bottom: 0;">
+    🗑️ Clear Queue
+  </button>
+
+  <div id="statusMsg" class="status-msg"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

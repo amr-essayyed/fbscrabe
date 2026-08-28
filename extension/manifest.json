@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "PostSnag - Facebook Ad Candidate Collector",
+  "version": "1.0.0",
+  "description": "Collects visible Facebook Page posts, metrics, and media while scrolling, sending them to PostSnag for AI ad scoring.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.facebook.com/*",
+    "https://web.facebook.com/*",
+    "http://localhost:3000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PostSnag Collector"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
