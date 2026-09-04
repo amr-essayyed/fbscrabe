@@ -13,6 +13,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('google/gemini-2.0-flash-001');
+  const [customCategories, setCustomCategories] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -25,6 +26,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         if (data.success && data.settings) {
           setApiKey(data.settings.openrouter_api_key || '');
           setModel(data.settings.openrouter_model || 'google/gemini-2.0-flash-001');
+          setCustomCategories(data.settings.custom_categories || '');
         }
       })
       .catch((err) => console.error('Failed to load settings:', err))
@@ -40,7 +42,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           openrouter_api_key: apiKey,
-          openrouter_model: model
+          openrouter_model: model,
+          custom_categories: customCategories
         })
       });
       const data = await res.json();
@@ -141,6 +144,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <option value="openai/gpt-4o-mini">OpenAI GPT-4o Mini (Balanced)</option>
                 <option value="deepseek/deepseek-r1">DeepSeek R1 (Reasoning)</option>
               </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Custom Categories (comma separated)
+              </label>
+              <input
+                type="text"
+                value={customCategories}
+                onChange={(e) => setCustomCategories(e.target.value)}
+                placeholder="e.g. Fitness, SaaS, E-commerce, Real Estate"
+                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2 text-xs font-sans text-slate-200 focus:border-purple-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500 flex items-center space-x-1">
+                <Info className="h-3 w-3 text-purple-400 shrink-0" />
+                <span>Override the default PostSnag categories for AI analysis.</span>
+              </p>
             </div>
 
             <div className="flex items-center justify-between pt-2">

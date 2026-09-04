@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb, initDb, generateTextHash } from '@/lib/db';
 import { checkDuplicate, IngestPostPayload } from '@/lib/deduplication';
-import { analyzePostWithAI } from '@/lib/aiService';
+import { analyzePostWithRules } from '@/lib/aiService';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,7 +50,10 @@ export async function POST(request: Request) {
       const comments = item.comments || 0;
       const shares = item.shares || 0;
 
-      const aiResult = await analyzePostWithAI(item.text, reactions, comments, shares);
+      // Use rule-based engine during ingest to save API calls, AI categorization can be triggered manually later
+      const aiResult = analyzePostWithRules(item.text, reactions, comments, shares);
+      aiResult.category = 'Other'; // Reset category until AI runs
+      
       const textHash = generateTextHash(item.text);
       const fbUrl = item.facebook_url || `https://www.facebook.com/post/${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
 

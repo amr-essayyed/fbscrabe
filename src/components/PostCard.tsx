@@ -14,7 +14,8 @@ import {
   Clock, 
   Image as ImageIcon,
   Flame,
-  Zap
+  Zap,
+  FileText
 } from 'lucide-react';
 
 interface PostCardProps {
@@ -125,6 +126,16 @@ export function PostCard({ post, onSelectPost, onUpdateStatus }: PostCardProps) 
 
         {/* Highlighted Characteristics Tags */}
         <div className="flex flex-wrap gap-1.5 mb-4">
+          <span className="inline-flex items-center space-x-1 rounded-md bg-slate-800/80 px-2 py-0.5 text-[11px] font-medium text-slate-300 border border-slate-700/60 capitalize">
+            {post.media_type === 'video' ? (
+              <Zap className="h-3 w-3 text-rose-400" />
+            ) : post.media_type === 'image' ? (
+              <ImageIcon className="h-3 w-3 text-blue-400" />
+            ) : (
+              <FileText className="h-3 w-3 text-slate-400" />
+            )}
+            <span>{post.media_type || 'Text'}</span>
+          </span>
           <span className="inline-flex items-center space-x-1 rounded-md bg-slate-800/80 px-2 py-0.5 text-[11px] font-medium text-slate-300 border border-slate-700/60">
             <Tag className="h-3 w-3 text-indigo-400" />
             <span>{post.category || 'Other'}</span>

@@ -142,6 +142,13 @@
 
       articles.forEach((art) => {
         try {
+          // Skip comments by ensuring the element isn't nested inside another article or comment-like container
+          if (art.closest('[aria-label="Comment"]') || 
+              art.closest('ul') || 
+              (art.getAttribute('role') === 'article' && art.parentElement?.closest('[role="article"]'))) {
+            return;
+          }
+
           const postData = parsePostElement(art, pageName, pageUrl);
           if (postData && postData.text && postData.text.length > 10) {
             const key = postData.facebook_url || postData.text;
@@ -207,7 +214,7 @@
 
     // Media (Image or Video)
     let mediaUrl = '';
-    let mediaType = 'none';
+    let mediaType = 'text';
 
     const img = art.querySelector('img[src*="fbcdn"], img[src*="scontent"]');
     if (img && img.src) {

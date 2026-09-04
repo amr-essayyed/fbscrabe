@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PostRecord, PostStatus, PostCategory } from '@/lib/types';
 import { PostCard } from './PostCard';
 import { 
@@ -42,18 +42,37 @@ export function PostsExplorer({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  const categories: PostCategory[] = [
-    'Product',
-    'Promotion / Offer',
-    'Educational',
-    'Testimonial',
-    'Customer Story',
-    'Brand / Awareness',
-    'Announcement',
-    'Event',
-    'Question / Engagement',
-    'Other'
-  ];
+  const [settingsCategories, setSettingsCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.settings?.custom_categories) {
+          const cats = data.settings.custom_categories.split(',').map((c: string) => c.trim()).filter(Boolean);
+          setSettingsCategories(cats);
+        }
+      })
+      .catch(err => console.error('Failed to load custom categories', err));
+  }, []);
+
+  const categories = useMemo(() => {
+    const defaultCats = [
+      'Product',
+      'Promotion / Offer',
+      'Educational',
+      'Testimonial',
+      'Customer Story',
+      'Brand / Awareness',
+      'Announcement',
+      'Event',
+      'Question / Engagement',
+      'Other'
+    ];
+    // Also include any categories dynamically found in the posts
+    const postCats = posts.map(p => p.category).filter(Boolean) as string[];
+    return Array.from(new Set([...defaultCats, ...settingsCategories, ...postCats]));
+  }, [settingsCategories, posts]);
 
   // Client-side filtering & sorting for instant UI response
   const filteredPosts = useMemo(() => {

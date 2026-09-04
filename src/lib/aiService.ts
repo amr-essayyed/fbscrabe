@@ -17,9 +17,14 @@ export async function analyzePostWithAI(
   try {
     const apiKeyRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_api_key'", args: [] });
     const modelRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_model'", args: [] });
+    const customCatRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'custom_categories'", args: [] });
     apiKey = apiKeyRow.rows[0]?.value as string | undefined;
     if (modelRow.rows[0]?.value) {
       model = modelRow.rows[0].value as string;
+    }
+    if (!customCategories && customCatRow.rows[0]?.value) {
+      const cats = (customCatRow.rows[0].value as string).split(',').map(c => c.trim()).filter(Boolean);
+      if (cats.length > 0) customCategories = cats;
     }
   } catch (err) {
     // Ignore settings fetch error if table not init yet
@@ -71,8 +76,9 @@ Evaluate the post across these criteria:
 
 CATEGORIES (pick exactly ONE primary category from the list below):
 ${customCategories && customCategories.length > 0
-  ? customCategories.map(c => `"${c}"`).join(', ')
+  ? `${customCategories.map(c => `"${c}"`).join(', ')}, "Other"`
   : '"Product", "Promotion / Offer", "Educational", "Testimonial", "Customer Story", "Brand / Awareness", "Announcement", "Event", "Entertainment", "Question / Engagement", "Other"'}
+(IMPORTANT: If the post does not strongly fit any of these specific categories, you MUST choose "Other". Do not make up categories.)
 
 CHARACTERISTICS (boolean flags):
 has_product, has_offer, has_discount, has_cta, has_price, has_testimonial, has_customer_problem, has_solution, has_emotional_appeal, has_social_proof, has_urgency, has_educational_value, has_strong_hook

@@ -8,12 +8,14 @@ export async function GET() {
 
     const apiKeyRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_api_key'", args: [] });
     const modelRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_model'", args: [] });
+    const customCategoriesRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'custom_categories'", args: [] });
 
     return NextResponse.json({
       success: true,
       settings: {
         openrouter_api_key: (apiKeyRow.rows[0]?.value as string) || '',
         openrouter_model: (modelRow.rows[0]?.value as string) || 'google/gemini-2.0-flash-001',
+        custom_categories: (customCategoriesRow.rows[0]?.value as string) || '',
       }
     });
   } catch (error: any) {
@@ -25,7 +27,7 @@ export async function POST(request: Request) {
   try {
     await initDb();
     const body = await request.json();
-    const { openrouter_api_key, openrouter_model } = body;
+    const { openrouter_api_key, openrouter_model, custom_categories } = body;
 
     const db = getDb();
 
@@ -39,6 +41,12 @@ export async function POST(request: Request) {
       await db.execute({
         sql: 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
         args: ['openrouter_model', openrouter_model.trim()]
+      });
+    }
+    if (custom_categories !== undefined) {
+      await db.execute({
+        sql: 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        args: ['custom_categories', custom_categories.trim()]
       });
     }
 
