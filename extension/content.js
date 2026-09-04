@@ -12,7 +12,7 @@
   let collectedPostsMap = new Map(); // hash -> post object
   let isAutoScrolling = false;
   let scrollTimer = null;
-  let serverUrl = 'http://localhost:3000';
+  let serverUrl = 'https://fbscrabe.vercel.app';
   let debounceScanTimeout = null;
 
   // Load configuration from storage

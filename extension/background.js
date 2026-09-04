@@ -5,7 +5,7 @@
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[PostSnag Background] Extension installed successfully.');
   chrome.storage.local.set({
-    serverUrl: 'http://localhost:3000',
+    serverUrl: 'https://fbscrabe.vercel.app',
     collectedPosts: []
   });
 });

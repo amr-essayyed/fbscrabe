@@ -11,7 +11,7 @@
   "host_permissions": [
     "https://www.facebook.com/*",
     "https://web.facebook.com/*",
-    "http://localhost:3000/*"
+    "https://fbscrabe.vercel.app/*"
   ],
   "action": {
     "default_popup": "popup.html",
