@@ -136,19 +136,29 @@
       const pageName = getPageName();
       const pageUrl = window.location.href.split('?')[0];
 
-      // Facebook posts use [role="article"] or [data-pagelet^="FeedUnit"] or [dir="auto"] containers
-      const articles = Array.from(document.querySelectorAll('div[role="article"], div[data-pagelet*="FeedUnit"], div[data-ad-preview="message"]'));
+      // Find all potential post containers
+      let rawArticles = Array.from(document.querySelectorAll('div[role="article"]'));
+      if (rawArticles.length === 0) {
+        rawArticles = Array.from(document.querySelectorAll('div[data-pagelet*="FeedUnit"]'));
+      }
+      
+      // Filter out nested ones (comments or sub-articles nested inside another main article)
+      const articles = rawArticles.filter((art) => {
+        // If art is nested inside a comment block, filter it out
+        if (art.parentElement && art.parentElement.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"]')) {
+          return false;
+        }
+        // If art is nested inside another role="article", filter it out (it's a comment or nested sub-post)
+        if (art.parentElement && art.parentElement.closest('div[role="article"]')) {
+          return false;
+        }
+        return true;
+      });
+
       let newFound = 0;
 
       articles.forEach((art) => {
         try {
-          // Skip comments by ensuring the element isn't nested inside another article or comment-like container
-          if (art.closest('[aria-label="Comment"]') || 
-              art.closest('ul') || 
-              (art.getAttribute('role') === 'article' && art.parentElement?.closest('[role="article"]'))) {
-            return;
-          }
-
           const postData = parsePostElement(art, pageName, pageUrl);
           if (postData && postData.text && postData.text.length > 10) {
             const key = postData.facebook_url || postData.text;
@@ -195,20 +205,41 @@
 
     // Post Text
     let text = '';
-    const textEls = art.querySelectorAll('[data-ad-preview="message"], [dir="auto"]');
-    textEls.forEach((el) => {
-      if (!el.closest('[role="button"]') && el.innerText && el.innerText.trim().length > text.length) {
-        text = el.innerText.trim();
-      }
-    });
+    const priorityEl = art.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
+    if (priorityEl && priorityEl.innerText && priorityEl.innerText.trim().length > 5) {
+      text = priorityEl.innerText.trim();
+    } else {
+      const textEls = Array.from(art.querySelectorAll('[dir="auto"]'));
+      textEls.forEach((el) => {
+        // Skip elements inside comment blocks
+        if (el.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"], ul, form')) {
+          return;
+        }
+        // Skip header/author titles, action buttons, timestamps
+        if (el.closest('[role="button"], button, h1, h2, h3, h4, h5, h6, [role="heading"], abbr, time')) {
+          return;
+        }
+        // Skip links that are short user names or metadata
+        if (el.closest('a[role="link"]') && (!el.innerText || el.innerText.length < 30)) {
+          return;
+        }
+
+        const candidateText = el.innerText ? el.innerText.trim() : '';
+        if (candidateText.length > text.length) {
+          text = candidateText;
+        }
+      });
+    }
 
     if (!text || text.length < 5) return null;
 
     // Post URL / Link
     let fbUrl = '';
-    const links = Array.from(art.querySelectorAll('a[href*="/posts/"], a[href*="/permalink.php"], a[href*="pfbid"], a[href*="/videos/"], a[href*="/photos/"]'));
-    if (links.length > 0) {
-      const rawHref = links[0].getAttribute('href') || '';
+    const links = Array.from(art.querySelectorAll('a[href*="/posts/"], a[href*="/permalink.php"], a[href*="pfbid"], a[href*="/videos/"], a[href*="/photos/"], a[href*="/reel/"]'));
+    const validLinks = links.filter(link => !link.closest('[aria-label*="Comment"], [aria-label*="comment"], ul, form'));
+    const targetLink = validLinks.length > 0 ? validLinks[0] : links[0];
+    if (targetLink) {
+      const rawHref = targetLink.getAttribute('href') || '';
       fbUrl = rawHref.startsWith('http') ? rawHref.split('?')[0] : `https://www.facebook.com${rawHref.split('?')[0]}`;
     }
 
@@ -216,16 +247,28 @@
     let mediaUrl = '';
     let mediaType = 'text';
 
-    const img = art.querySelector('img[src*="fbcdn"], img[src*="scontent"]');
-    if (img && img.src) {
-      mediaUrl = img.src;
-      mediaType = 'image';
-    }
-
     const video = art.querySelector('video');
     if (video) {
       mediaType = 'video';
       if (video.poster) mediaUrl = video.poster;
+      else if (video.src && !video.src.startsWith('blob:')) mediaUrl = video.src;
+    } else {
+      const imgs = Array.from(art.querySelectorAll('img'));
+      for (const img of imgs) {
+        const src = img.src || '';
+        const alt = (img.alt || '').toLowerCase();
+        const width = img.width || img.clientWidth || 0;
+        const height = img.height || img.clientHeight || 0;
+
+        if (alt.includes('profile') || alt.includes('avatar') || alt.includes('emoji')) continue;
+        if ((width > 0 && width < 100) || (height > 0 && height < 100)) continue;
+
+        if (src.includes('fbcdn') || src.includes('scontent')) {
+          mediaUrl = src;
+          mediaType = 'image';
+          break;
+        }
+      }
     }
 
     // Metrics (Reactions, Comments, Shares)
@@ -233,7 +276,11 @@
     let comments = 0;
     let shares = 0;
 
-    const fullText = art.innerText || '';
+    let fullText = art.innerText || '';
+    const ariaEls = art.querySelectorAll('[aria-label]');
+    ariaEls.forEach((el) => {
+      fullText += ' ' + (el.getAttribute('aria-label') || '');
+    });
 
     // Reactions regex parse (e.g. 1.4K, 520, 10K)
     const reactionMatch = fullText.match(/([0-9.,]+[KkMm]?)\s*(?:reactions|likes|others|\uD83D\uDC4D)/i);
