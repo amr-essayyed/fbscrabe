@@ -13,26 +13,30 @@ export interface IngestPostPayload {
   shares?: number;
 }
 
-export function checkDuplicate(payload: IngestPostPayload): { isDuplicate: boolean; existingPostId?: number } {
+export async function checkDuplicate(payload: IngestPostPayload): Promise<{ isDuplicate: boolean; existingPostId?: number }> {
   const db = getDb();
 
-  // 1. Primary check by Facebook URL if present
+  // 1. Primary check by Facebook URL
   if (payload.facebook_url && payload.facebook_url.trim().length > 0) {
-    const cleanUrl = payload.facebook_url.trim().split('?')[0]; // strip URL query params
-    const existingByUrl = db.prepare('SELECT id FROM posts WHERE facebook_url LIKE ? OR facebook_url = ?')
-      .get(`${cleanUrl}%`, payload.facebook_url.trim()) as { id: number } | undefined;
-
-    if (existingByUrl) {
-      return { isDuplicate: true, existingPostId: existingByUrl.id };
+    const cleanUrl = payload.facebook_url.trim().split('?')[0];
+    const result = await db.execute({
+      sql: 'SELECT id FROM posts WHERE facebook_url = ? OR facebook_url LIKE ?',
+      args: [payload.facebook_url.trim(), `${cleanUrl}%`]
+    });
+    if (result.rows.length > 0) {
+      return { isDuplicate: true, existingPostId: Number(result.rows[0].id) };
     }
   }
 
-  // 2. Secondary check by Text Hash + Page URL/Name or Date
+  // 2. Secondary check by text hash
   const textHash = generateTextHash(payload.text);
-  const existingByHash = db.prepare('SELECT id FROM posts WHERE text_hash = ?').get(textHash) as { id: number } | undefined;
+  const hashResult = await db.execute({
+    sql: 'SELECT id FROM posts WHERE text_hash = ?',
+    args: [textHash]
+  });
 
-  if (existingByHash) {
-    return { isDuplicate: true, existingPostId: existingByHash.id };
+  if (hashResult.rows.length > 0) {
+    return { isDuplicate: true, existingPostId: Number(hashResult.rows[0].id) };
   }
 
   return { isDuplicate: false };

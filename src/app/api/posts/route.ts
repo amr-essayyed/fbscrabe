@@ -1,16 +1,26 @@
 import { NextResponse } from 'next/server';
-import { getDb, generateTextHash } from '@/lib/db';
+import { getDb, initDb, generateTextHash } from '@/lib/db';
+import { checkDuplicate } from '@/lib/deduplication';
 import { analyzePostWithAI } from '@/lib/aiService';
 import { PostRecord } from '@/lib/types';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
+}
+
 export async function GET(request: Request) {
   try {
+    await initDb();
     const { searchParams } = new URL(request.url);
-    const category = searchParams.get('category');
     const status = searchParams.get('status');
-    const search = searchParams.get('search');
-    const sortBy = searchParams.get('sortBy') || 'date'; // 'engagement' | 'ad_score' | 'date' | 'comments' | 'shares'
-    const sortOrder = searchParams.get('sortOrder') || 'desc';
+    const category = searchParams.get('category');
+    const pageId = searchParams.get('page_id');
 
     const db = getDb();
 
@@ -18,146 +28,231 @@ export async function GET(request: Request) {
       SELECT p.*, pg.name as page_name, pg.url as page_url
       FROM posts p
       LEFT JOIN pages pg ON p.page_id = pg.id
-      WHERE 1=1
     `;
-    const params: any[] = [];
-
-    if (category && category !== 'All') {
-      query += ` AND p.category = ?`;
-      params.push(category);
-    }
+    const conditions: string[] = [];
+    const args: any[] = [];
 
     if (status && status !== 'All') {
-      query += ` AND p.status = ?`;
-      params.push(status);
+      conditions.push('p.status = ?');
+      args.push(status);
+    }
+    if (category && category !== 'All') {
+      conditions.push('p.category = ?');
+      args.push(category);
+    }
+    if (pageId) {
+      conditions.push('p.page_id = ?');
+      args.push(Number(pageId));
     }
 
-    if (search && search.trim() !== '') {
-      query += ` AND (p.text LIKE ? OR p.manual_notes LIKE ? OR pg.name LIKE ?)`;
-      const term = `%${search.trim()}%`;
-      params.push(term, term, term);
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    // Sorting
-    let orderByClause = 'ORDER BY p.created_at DESC';
-    const direction = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    query += ' ORDER BY p.created_at DESC';
 
-    switch (sortBy) {
-      case 'ad_score':
-        orderByClause = `ORDER BY p.ad_score ${direction}, p.id DESC`;
-        break;
-      case 'engagement':
-        orderByClause = `ORDER BY (p.reactions + (p.comments * 2) + (p.shares * 3)) ${direction}, p.id DESC`;
-        break;
-      case 'comments':
-        orderByClause = `ORDER BY p.comments ${direction}, p.id DESC`;
-        break;
-      case 'shares':
-        orderByClause = `ORDER BY p.shares ${direction}, p.id DESC`;
-        break;
-      case 'date':
-      default:
-        orderByClause = `ORDER BY p.date ${direction}, p.id DESC`;
-        break;
-    }
+    const result = await db.execute({ sql: query, args });
 
-    query += ` ${orderByClause}`;
-
-    const rawPosts = db.prepare(query).all(...params) as any[];
-
-    const posts: PostRecord[] = rawPosts.map((row) => ({
-      ...row,
-      characteristics: row.characteristics ? JSON.parse(row.characteristics) : {},
-      ai_analysis: row.ai_analysis ? JSON.parse(row.ai_analysis) : undefined
+    const posts: PostRecord[] = result.rows.map((r: any) => ({
+      ...r,
+      id: Number(r.id),
+      page_id: r.page_id ? Number(r.page_id) : undefined,
+      reactions: Number(r.reactions || 0),
+      comments: Number(r.comments || 0),
+      shares: Number(r.shares || 0),
+      ad_score: Number(r.ad_score || 0),
+      characteristics: r.characteristics
+        ? typeof r.characteristics === 'string'
+          ? JSON.parse(r.characteristics)
+          : r.characteristics
+        : {},
+      ai_analysis: r.ai_analysis
+        ? typeof r.ai_analysis === 'string'
+          ? JSON.parse(r.ai_analysis)
+          : r.ai_analysis
+        : undefined,
     }));
 
-    return NextResponse.json({ success: true, count: posts.length, posts });
+    return NextResponse.json({ success: true, posts }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('Error fetching posts:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500, headers: corsHeaders }
+    );
   }
 }
 
 export async function POST(request: Request) {
   try {
+    await initDb();
     const body = await request.json();
-    const { text, facebook_url, date, media_url, media_type, reactions, comments, shares, page_name, page_url } = body;
+    const {
+      text,
+      page_name,
+      page_url,
+      facebook_url,
+      media_url,
+      media_type,
+      reactions = 0,
+      comments = 0,
+      shares = 0,
+    } = body;
 
-    if (!text || text.trim() === '') {
-      return NextResponse.json({ success: false, error: 'Post text is required' }, { status: 400 });
+    if (!text || !text.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'Post text is required' },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
     const db = getDb();
 
-    // Ensure Page
-    let pageId = null;
+    // Look up or create page if page info is provided
+    let pageId: number | null = null;
     if (page_url || page_name) {
-      const targetUrl = page_url || `https://facebook.com/${(page_name || 'unknown').toLowerCase().replace(/\s+/g, '')}`;
-      db.prepare('INSERT OR IGNORE INTO pages (name, url) VALUES (?, ?)').run(page_name || 'Facebook Page', targetUrl);
-      const pg = db.prepare('SELECT id FROM pages WHERE url = ?').get(targetUrl) as { id: number } | undefined;
-      pageId = pg ? pg.id : null;
-    }
-
-    const textHash = generateTextHash(text);
-    const fbUrl = facebook_url || `https://facebook.com/post/${Date.now()}`;
-
-    // Fetch page's custom categories if page exists
-    let pageCategories: string[] = [];
-    if (pageId) {
-      const pgRow = db.prepare('SELECT categories FROM pages WHERE id = ?').get(pageId) as { categories: string } | undefined;
-      if (pgRow?.categories) {
-        try { pageCategories = JSON.parse(pgRow.categories); } catch { /* ignore */ }
+      const pUrl =
+        page_url ||
+        `https://www.facebook.com/${(page_name || 'page')
+          .toLowerCase()
+          .replace(/\s+/g, '')}`;
+      const pName = page_name || 'Facebook Page';
+      await db.execute({
+        sql: 'INSERT OR IGNORE INTO pages (name, url) VALUES (?, ?)',
+        args: [pName, pUrl],
+      });
+      const pg = await db.execute({
+        sql: 'SELECT id FROM pages WHERE url = ?',
+        args: [pUrl],
+      });
+      if (pg.rows.length > 0) {
+        pageId = Number(pg.rows[0].id);
       }
     }
 
-    // Auto AI analyze on create — use page-specific categories when available
+    // Check duplicate
+    const dupResult = await checkDuplicate({ facebook_url, text });
+    if (dupResult.isDuplicate && dupResult.existingPostId) {
+      const existing = await db.execute({
+        sql: `SELECT p.*, pg.name as page_name, pg.url as page_url
+              FROM posts p LEFT JOIN pages pg ON p.page_id = pg.id
+              WHERE p.id = ?`,
+        args: [dupResult.existingPostId],
+      });
+      if (existing.rows.length > 0) {
+        const row = existing.rows[0] as any;
+        const post: PostRecord = {
+          ...row,
+          id: Number(row.id),
+          page_id: row.page_id ? Number(row.page_id) : undefined,
+          reactions: Number(row.reactions || 0),
+          comments: Number(row.comments || 0),
+          shares: Number(row.shares || 0),
+          ad_score: Number(row.ad_score || 0),
+          characteristics: row.characteristics
+            ? JSON.parse(row.characteristics as string)
+            : {},
+          ai_analysis: row.ai_analysis
+            ? JSON.parse(row.ai_analysis as string)
+            : undefined,
+        };
+        return NextResponse.json(
+          { success: true, post, is_duplicate: true },
+          { headers: corsHeaders }
+        );
+      }
+    }
+
+    // Fetch custom categories for page if pageId exists
+    let customCategories: string[] | undefined;
+    if (pageId) {
+      const pageRes = await db.execute({
+        sql: 'SELECT categories FROM pages WHERE id = ?',
+        args: [pageId],
+      });
+      if (pageRes.rows.length > 0 && pageRes.rows[0].categories) {
+        try {
+          const cats = JSON.parse(pageRes.rows[0].categories as string);
+          if (Array.isArray(cats) && cats.length > 0) {
+            customCategories = cats;
+          }
+        } catch {}
+      }
+    }
+
+    // AI Analysis
     const aiResult = await analyzePostWithAI(
       text,
-      reactions || 0,
-      comments || 0,
-      shares || 0,
-      pageCategories.length > 0 ? pageCategories : undefined
+      Number(reactions),
+      Number(comments),
+      Number(shares),
+      customCategories
     );
+    const textHash = generateTextHash(text);
+    const fbUrl =
+      facebook_url ||
+      `https://www.facebook.com/post/${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 7)}`;
 
-    const stmt = db.prepare(`
-      INSERT INTO posts (
+    const insertResult = await db.execute({
+      sql: `INSERT INTO posts (
         page_id, facebook_url, text, date, media_url, media_type,
         reactions, comments, shares, category, status, ad_score,
         characteristics, ai_analysis, manual_notes, text_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
-      pageId,
-      fbUrl,
-      text,
-      date || new Date().toISOString(),
-      media_url || null,
-      media_type || 'none',
-      reactions || 0,
-      comments || 0,
-      shares || 0,
-      aiResult.category,
-      'Unreviewed',
-      aiResult.overall_score,
-      JSON.stringify(aiResult.characteristics),
-      JSON.stringify(aiResult),
-      '',
-      textHash
-    );
-
-    const createdPost = db.prepare('SELECT * FROM posts WHERE id = ?').get(result.lastInsertRowid) as any;
-
-    return NextResponse.json({
-      success: true,
-      post: {
-        ...createdPost,
-        characteristics: JSON.parse(createdPost.characteristics || '{}'),
-        ai_analysis: JSON.parse(createdPost.ai_analysis || '{}')
-      }
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        pageId,
+        fbUrl,
+        text,
+        new Date().toISOString(),
+        media_url || null,
+        media_type || (media_url ? 'image' : 'none'),
+        Number(reactions),
+        Number(comments),
+        Number(shares),
+        aiResult.category,
+        'Unreviewed',
+        aiResult.overall_score,
+        JSON.stringify(aiResult.characteristics),
+        JSON.stringify(aiResult),
+        '',
+        textHash,
+      ],
     });
+
+    const newId = Number(insertResult.lastInsertRowid);
+
+    const postQuery = await db.execute({
+      sql: `SELECT p.*, pg.name as page_name, pg.url as page_url
+            FROM posts p LEFT JOIN pages pg ON p.page_id = pg.id
+            WHERE p.id = ?`,
+      args: [newId],
+    });
+
+    const row = postQuery.rows[0] as any;
+    const post: PostRecord = {
+      ...row,
+      id: Number(row.id),
+      page_id: row.page_id ? Number(row.page_id) : undefined,
+      reactions: Number(row.reactions || 0),
+      comments: Number(row.comments || 0),
+      shares: Number(row.shares || 0),
+      ad_score: Number(row.ad_score || 0),
+      characteristics: row.characteristics
+        ? JSON.parse(row.characteristics as string)
+        : {},
+      ai_analysis: row.ai_analysis
+        ? JSON.parse(row.ai_analysis as string)
+        : undefined,
+    };
+
+    return NextResponse.json({ success: true, post }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('Error creating post:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500, headers: corsHeaders }
+    );
   }
 }

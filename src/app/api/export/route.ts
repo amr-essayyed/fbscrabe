@@ -1,93 +1,56 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getDb, initDb } from '@/lib/db';
 
 export async function GET(request: Request) {
   try {
+    await initDb();
     const { searchParams } = new URL(request.url);
-    const format = searchParams.get('format') || 'json'; // 'json' | 'csv'
+    const format = searchParams.get('format') || 'json';
     const status = searchParams.get('status');
     const pageId = searchParams.get('page_id');
 
     const db = getDb();
     const conditions: string[] = [];
-    const params: any[] = [];
+    const args: any[] = [];
 
-    if (status && status !== 'All') {
-      conditions.push('p.status = ?');
-      params.push(status);
-    }
-    if (pageId) {
-      conditions.push('p.page_id = ?');
-      params.push(Number(pageId));
-    }
+    if (status && status !== 'All') { conditions.push('p.status = ?'); args.push(status); }
+    if (pageId) { conditions.push('p.page_id = ?'); args.push(Number(pageId)); }
 
-    let query = `
+    const sql = `
       SELECT p.*, pg.name as page_name, pg.url as page_url
-      FROM posts p
-      LEFT JOIN pages pg ON p.page_id = pg.id
+      FROM posts p LEFT JOIN pages pg ON p.page_id = pg.id
       ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
+      ORDER BY p.id DESC
     `;
-    query += ' ORDER BY p.id DESC';
 
-    const rawPosts = db.prepare(query).all(...params) as any[];
-
-    const posts = rawPosts.map((row) => ({
+    const result = await db.execute({ sql, args });
+    const posts = result.rows.map((row: any) => ({
       ...row,
-      characteristics: row.characteristics ? JSON.parse(row.characteristics) : {},
-      ai_analysis: row.ai_analysis ? JSON.parse(row.ai_analysis) : undefined
+      characteristics: row.characteristics ? JSON.parse(row.characteristics as string) : {},
+      ai_analysis: row.ai_analysis ? JSON.parse(row.ai_analysis as string) : undefined,
     }));
 
     if (format === 'csv') {
       const headers = [
-        'ID',
-        'Page Name',
-        'FB URL',
-        'Post Text',
-        'Date',
-        'Media URL',
-        'Media Type',
-        'Reactions',
-        'Comments',
-        'Shares',
-        'Category',
-        'Status',
-        'Ad Score',
-        'AI Rating',
-        'Suggested Angle',
-        'Why Ad',
-        'Manual Notes'
+        'ID', 'Page Name', 'FB URL', 'Post Text', 'Date', 'Media URL', 'Media Type',
+        'Reactions', 'Comments', 'Shares', 'Category', 'Status', 'Ad Score',
+        'AI Rating', 'Suggested Angle', 'Why Ad', 'Manual Notes'
       ];
-
       const csvRows = [headers.join(',')];
-
       for (const p of posts) {
-        const row = [
-          p.id,
-          escapeCsvField(p.page_name || ''),
-          escapeCsvField(p.facebook_url || ''),
-          escapeCsvField(p.text || ''),
-          escapeCsvField(p.date || ''),
-          escapeCsvField(p.media_url || ''),
-          p.media_type || 'none',
-          p.reactions || 0,
-          p.comments || 0,
-          p.shares || 0,
-          escapeCsvField(p.category || 'Other'),
-          escapeCsvField(p.status || 'Unreviewed'),
-          p.ad_score || 0,
-          escapeCsvField(p.ai_analysis?.rating || ''),
-          escapeCsvField(p.ai_analysis?.suggested_angle || ''),
-          escapeCsvField(p.ai_analysis?.why_ad || ''),
-          escapeCsvField(p.manual_notes || '')
-        ];
-        csvRows.push(row.join(','));
+        csvRows.push([
+          p.id, esc(p.page_name || ''), esc(p.facebook_url || ''), esc(p.text || ''),
+          esc(p.date || ''), esc(p.media_url || ''), p.media_type || 'none',
+          p.reactions || 0, p.comments || 0, p.shares || 0,
+          esc(p.category || 'Other'), esc(p.status || 'Unreviewed'), p.ad_score || 0,
+          esc(p.ai_analysis?.rating || ''), esc(p.ai_analysis?.suggested_angle || ''),
+          esc(p.ai_analysis?.why_ad || ''), esc(p.manual_notes || '')
+        ].join(','));
       }
-
-      const csvContent = csvRows.join('\n');
-      return new NextResponse(csvContent, {
+      return new NextResponse(csvRows.join('\n'), {
         headers: {
           'Content-Type': 'text/csv',
-          'Content-Disposition': `attachment; filename="postsnag_export_${Date.now()}.csv"`
+          'Content-Disposition': `attachment; filename="postsnag_export_${Date.now()}.csv"`,
         }
       });
     }
@@ -95,7 +58,7 @@ export async function GET(request: Request) {
     return new NextResponse(JSON.stringify(posts, null, 2), {
       headers: {
         'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="postsnag_export_${Date.now()}.json"`
+        'Content-Disposition': `attachment; filename="postsnag_export_${Date.now()}.json"`,
       }
     });
   } catch (error: any) {
@@ -103,7 +66,6 @@ export async function GET(request: Request) {
   }
 }
 
-function escapeCsvField(val: string): string {
-  const str = String(val).replace(/"/g, '""');
-  return `"${str}"`;
+function esc(val: string): string {
+  return `"${String(val).replace(/"/g, '""')}"`;
 }

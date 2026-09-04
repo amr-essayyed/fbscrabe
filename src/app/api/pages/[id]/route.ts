@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getDb, initDb } from '@/lib/db';
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await initDb();
     const { id } = await params;
     const body = await request.json();
     const db = getDb();
 
-    const existing = db.prepare('SELECT id FROM pages WHERE id = ?').get(Number(id));
-    if (!existing) {
+    const existing = await db.execute({ sql: 'SELECT id FROM pages WHERE id = ?', args: [Number(id)] });
+    if (existing.rows.length === 0) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
 
@@ -24,12 +25,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     values.push(Number(id));
-    db.prepare(`UPDATE pages SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await db.execute({ sql: `UPDATE pages SET ${fields.join(', ')} WHERE id = ?`, args: values });
 
-    const updated = db.prepare('SELECT * FROM pages WHERE id = ?').get(Number(id)) as any;
+    const updated = await db.execute({ sql: 'SELECT * FROM pages WHERE id = ?', args: [Number(id)] });
+    const page = updated.rows[0] as any;
     return NextResponse.json({
       success: true,
-      page: { ...updated, categories: JSON.parse(updated.categories || '[]') }
+      page: { ...page, id: Number(page.id), categories: JSON.parse((page.categories as string) || '[]') }
     });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -38,17 +40,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await initDb();
     const { id } = await params;
     const db = getDb();
 
-    const existing = db.prepare('SELECT id FROM pages WHERE id = ?').get(Number(id));
-    if (!existing) {
+    const existing = await db.execute({ sql: 'SELECT id FROM pages WHERE id = ?', args: [Number(id)] });
+    if (existing.rows.length === 0) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
 
-    // Delete posts belonging to this page first
-    db.prepare('DELETE FROM posts WHERE page_id = ?').run(Number(id));
-    db.prepare('DELETE FROM pages WHERE id = ?').run(Number(id));
+    await db.execute({ sql: 'DELETE FROM posts WHERE page_id = ?', args: [Number(id)] });
+    await db.execute({ sql: 'DELETE FROM pages WHERE id = ?', args: [Number(id)] });
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

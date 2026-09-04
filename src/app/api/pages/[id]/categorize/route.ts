@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getDb, initDb } from '@/lib/db';
 import { analyzePostWithAI } from '@/lib/aiService';
 
 export async function POST(
@@ -7,19 +7,20 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await initDb();
     const { id } = await params;
     const pageId = Number(id);
     const db = getDb();
 
-    // Fetch the page and its custom categories
-    const page = db.prepare('SELECT * FROM pages WHERE id = ?').get(pageId) as any;
-    if (!page) {
+    const pageResult = await db.execute({ sql: 'SELECT * FROM pages WHERE id = ?', args: [pageId] });
+    if (pageResult.rows.length === 0) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
+    const page = pageResult.rows[0] as any;
 
     let customCategories: string[] = [];
     try {
-      customCategories = page.categories ? JSON.parse(page.categories) : [];
+      customCategories = page.categories ? JSON.parse(page.categories as string) : [];
     } catch { /* ignore */ }
 
     if (customCategories.length === 0) {
@@ -29,44 +30,27 @@ export async function POST(
       }, { status: 400 });
     }
 
-    // Fetch all posts for this page
-    const posts = db.prepare('SELECT * FROM posts WHERE page_id = ?').all(pageId) as any[];
+    const postsResult = await db.execute({ sql: 'SELECT * FROM posts WHERE page_id = ?', args: [pageId] });
+    const posts = postsResult.rows as any[];
 
     if (posts.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: 'No posts to categorize for this page.',
-        analyzed_count: 0
-      });
+      return NextResponse.json({ success: true, message: 'No posts to categorize for this page.', analyzed_count: 0 });
     }
 
     let analyzedCount = 0;
-
     for (const post of posts) {
       const aiResult = await analyzePostWithAI(
-        post.text,
-        post.reactions || 0,
-        post.comments || 0,
-        post.shares || 0,
+        post.text as string,
+        Number(post.reactions) || 0,
+        Number(post.comments) || 0,
+        Number(post.shares) || 0,
         customCategories
       );
 
-      db.prepare(`
-        UPDATE posts SET
-          ad_score = ?,
-          category = ?,
-          characteristics = ?,
-          ai_analysis = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(
-        aiResult.overall_score,
-        aiResult.category,
-        JSON.stringify(aiResult.characteristics),
-        JSON.stringify(aiResult),
-        post.id
-      );
-
+      await db.execute({
+        sql: `UPDATE posts SET ad_score = ?, category = ?, characteristics = ?, ai_analysis = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        args: [aiResult.overall_score, aiResult.category, JSON.stringify(aiResult.characteristics), JSON.stringify(aiResult), post.id]
+      });
       analyzedCount++;
     }
 

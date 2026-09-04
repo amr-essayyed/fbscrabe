@@ -11,11 +11,19 @@ export async function analyzePostWithAI(
   const db = getDb();
   
   // Fetch settings from DB
-  const apiKeyRow = db.prepare("SELECT value FROM settings WHERE key = 'openrouter_api_key'").get() as { value: string } | undefined;
-  const modelRow = db.prepare("SELECT value FROM settings WHERE key = 'openrouter_model'").get() as { value: string } | undefined;
+  let apiKey: string | undefined;
+  let model = 'google/gemini-2.0-flash-001';
 
-  const apiKey = apiKeyRow?.value;
-  const model = modelRow?.value || 'google/gemini-2.0-flash-001';
+  try {
+    const apiKeyRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_api_key'", args: [] });
+    const modelRow = await db.execute({ sql: "SELECT value FROM settings WHERE key = 'openrouter_model'", args: [] });
+    apiKey = apiKeyRow.rows[0]?.value as string | undefined;
+    if (modelRow.rows[0]?.value) {
+      model = modelRow.rows[0].value as string;
+    }
+  } catch (err) {
+    // Ignore settings fetch error if table not init yet
+  }
 
   if (apiKey && apiKey.trim().length > 0) {
     try {

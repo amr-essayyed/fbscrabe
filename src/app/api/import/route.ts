@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getDb, generateTextHash } from '@/lib/db';
+import { getDb, initDb, generateTextHash } from '@/lib/db';
 import { checkDuplicate } from '@/lib/deduplication';
 import { analyzePostWithAI } from '@/lib/aiService';
 
 export async function POST(request: Request) {
   try {
+    await initDb();
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
@@ -24,20 +25,9 @@ export async function POST(request: Request) {
     let duplicateCount = 0;
     let errorCount = 0;
 
-    const insertPost = db.prepare(`
-      INSERT INTO posts (
-        page_id, facebook_url, text, date, media_url, media_type,
-        reactions, comments, shares, category, status, ad_score,
-        characteristics, ai_analysis, manual_notes, text_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
     for (const record of records) {
       const postText = record['Post Text'] || record['text'] || record['Text'] || '';
-      if (!postText.trim()) {
-        errorCount++;
-        continue;
-      }
+      if (!postText.trim()) { errorCount++; continue; }
 
       const fbUrl = record['FB URL'] || record['facebook_url'] || record['Facebook URL'] || '';
       const reactions = parseInt(record['Reactions'] || record['reactions'] || '0', 10) || 0;
@@ -51,52 +41,42 @@ export async function POST(request: Request) {
       const statusHint = record['Status'] || record['status'] || 'Unreviewed';
       const pageName = record['Page Name'] || record['page_name'] || '';
 
-      // Check duplicates
-      const dupCheck = checkDuplicate({ facebook_url: fbUrl, text: postText });
-      if (dupCheck.isDuplicate) {
-        duplicateCount++;
-        continue;
-      }
+      const dupCheck = await checkDuplicate({ facebook_url: fbUrl, text: postText });
+      if (dupCheck.isDuplicate) { duplicateCount++; continue; }
 
-      // Handle Page reference
-      let pageId = null;
+      let pageId: number | null = null;
       if (pageName) {
         const targetUrl = `https://facebook.com/${pageName.toLowerCase().replace(/\s+/g, '')}`;
-        db.prepare('INSERT OR IGNORE INTO pages (name, url) VALUES (?, ?)').run(pageName, targetUrl);
-        const pg = db.prepare('SELECT id FROM pages WHERE url = ?').get(targetUrl) as { id: number } | undefined;
-        pageId = pg ? pg.id : null;
+        await db.execute({ sql: 'INSERT OR IGNORE INTO pages (name, url) VALUES (?, ?)', args: [pageName, targetUrl] });
+        const pg = await db.execute({ sql: 'SELECT id FROM pages WHERE url = ?', args: [targetUrl] });
+        pageId = pg.rows.length > 0 ? Number(pg.rows[0].id) : null;
       }
 
-      // Run AI Analysis or use imported values
-      let aiResult;
-      if (categoryHint) {
-        aiResult = await analyzePostWithAI(postText, reactions, comments, shares);
-        aiResult.category = categoryHint as any;
-      } else {
-        aiResult = await analyzePostWithAI(postText, reactions, comments, shares);
-      }
+      const aiResult = await analyzePostWithAI(postText, reactions, comments, shares);
+      if (categoryHint) aiResult.category = categoryHint as any;
 
       const textHash = generateTextHash(postText);
       const finalFbUrl = fbUrl || `https://facebook.com/post/${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const validStatuses = ['Unreviewed', 'Selected', 'Rejected', 'Review Later'];
 
-      insertPost.run(
-        pageId,
-        finalFbUrl,
-        postText,
-        date,
-        mediaUrl || null,
-        mediaType,
-        reactions,
-        comments,
-        shares,
-        aiResult.category,
-        ['Unreviewed', 'Selected', 'Rejected', 'Review Later'].includes(statusHint) ? statusHint : 'Unreviewed',
-        aiResult.overall_score,
-        JSON.stringify(aiResult.characteristics),
-        JSON.stringify(aiResult),
-        manualNotes,
-        textHash
-      );
+      await db.execute({
+        sql: `INSERT INTO posts (
+          page_id, facebook_url, text, date, media_url, media_type,
+          reactions, comments, shares, category, status, ad_score,
+          characteristics, ai_analysis, manual_notes, text_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          pageId, finalFbUrl, postText, date,
+          mediaUrl || null, mediaType,
+          reactions, comments, shares,
+          aiResult.category,
+          validStatuses.includes(statusHint) ? statusHint : 'Unreviewed',
+          aiResult.overall_score,
+          JSON.stringify(aiResult.characteristics),
+          JSON.stringify(aiResult),
+          manualNotes, textHash
+        ]
+      });
 
       importedCount++;
     }
@@ -106,7 +86,7 @@ export async function POST(request: Request) {
       message: `Import completed: ${importedCount} imported, ${duplicateCount} duplicates skipped, ${errorCount} invalid rows.`,
       imported_count: importedCount,
       duplicate_count: duplicateCount,
-      error_count: errorCount
+      error_count: errorCount,
     });
   } catch (error: any) {
     console.error('Error importing CSV:', error);
@@ -114,9 +94,6 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * Robust CSV Line & Cell Parser handling quotes, commas, and newlines inside quotes.
- */
 function parseCsv(csvText: string): Record<string, string>[] {
   const lines: string[][] = [];
   let currentRow: string[] = [];
@@ -128,23 +105,15 @@ function parseCsv(csvText: string): Record<string, string>[] {
     const nextChar = csvText[i + 1];
 
     if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentCell += '"';
-        i++; // skip double quote
-      } else {
-        inQuotes = !inQuotes;
-      }
+      if (inQuotes && nextChar === '"') { currentCell += '"'; i++; }
+      else { inQuotes = !inQuotes; }
     } else if (char === ',' && !inQuotes) {
       currentRow.push(currentCell.trim());
       currentCell = '';
     } else if ((char === '\r' || char === '\n') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        i++;
-      }
+      if (char === '\r' && nextChar === '\n') i++;
       currentRow.push(currentCell.trim());
-      if (currentRow.some((cell) => cell.length > 0)) {
-        lines.push(currentRow);
-      }
+      if (currentRow.some((c) => c.length > 0)) lines.push(currentRow);
       currentRow = [];
       currentCell = '';
     } else {
@@ -154,24 +123,15 @@ function parseCsv(csvText: string): Record<string, string>[] {
 
   if (currentCell.length > 0 || currentRow.length > 0) {
     currentRow.push(currentCell.trim());
-    if (currentRow.some((cell) => cell.length > 0)) {
-      lines.push(currentRow);
-    }
+    if (currentRow.some((c) => c.length > 0)) lines.push(currentRow);
   }
 
   if (lines.length < 2) return [];
 
   const headers = lines[0].map((h) => h.replace(/^"|"$/g, '').trim());
-  const result: Record<string, string>[] = [];
-
-  for (let r = 1; r < lines.length; r++) {
-    const row = lines[r];
-    const rowObj: Record<string, string> = {};
-    for (let c = 0; c < headers.length; c++) {
-      rowObj[headers[c]] = row[c] ? row[c].replace(/^"|"$/g, '').trim() : '';
-    }
-    result.push(rowObj);
-  }
-
-  return result;
+  return lines.slice(1).map((row) => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = row[i] ? row[i].replace(/^"|"$/g, '').trim() : ''; });
+    return obj;
+  });
 }
