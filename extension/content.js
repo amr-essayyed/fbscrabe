@@ -66,7 +66,10 @@
 
       <div style="background: #1e293b; padding: 8px 12px; border-radius: 10px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;">
         <span style="color: #94a3b8; font-size: 12px;">Collected:</span>
-        <span id="ps-count" style="font-weight: 800; font-size: 15px; color: #38bdf8;">0 posts</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="ps-count" style="font-weight: 800; font-size: 15px; color: #38bdf8;">0 posts</span>
+          <button id="ps-clear-btn" title="Clear memory" style="background: #334155; border: none; color: #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer;">Clear</button>
+        </div>
       </div>
 
       <div style="display: flex; gap: 6px;">
@@ -100,8 +103,17 @@
     const scanBtn = document.getElementById('ps-scan-btn');
     if (scanBtn) {
       scanBtn.onclick = () => {
-        const count = scanVisiblePosts();
-        showStatus(`Scanned ${count} new posts!`);
+        scanVisiblePosts();
+      };
+    }
+
+    const clearBtn = document.getElementById('ps-clear-btn');
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        collectedPostsMap.clear();
+        saveToStorage();
+        updateWidgetCount();
+        showStatus('Cleared collected posts');
       };
     }
 
@@ -136,31 +148,37 @@
       const pageName = getPageName();
       const pageUrl = window.location.href.split('?')[0];
 
-      // Find all potential post containers
+      // Find all potential post containers on Facebook
       let rawArticles = Array.from(document.querySelectorAll('div[role="article"]'));
-      if (rawArticles.length === 0) {
-        rawArticles = Array.from(document.querySelectorAll('div[data-pagelet*="FeedUnit"]'));
-      }
       
-      // Filter out nested ones (comments or sub-articles nested inside another main article)
-      const articles = rawArticles.filter((art) => {
-        // If art is nested inside a comment block, filter it out
-        if (art.parentElement && art.parentElement.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"]')) {
-          return false;
+      if (rawArticles.length === 0) {
+        rawArticles = Array.from(document.querySelectorAll('div[data-pagelet*="FeedUnit"], div[data-pagelet*="TimelineFeed"]'));
+      }
+      if (rawArticles.length === 0) {
+        const feed = document.querySelector('[role="feed"]');
+        if (feed) {
+          rawArticles = Array.from(feed.children).filter((child) => child.tagName === 'DIV');
         }
-        // If art is nested inside another role="article", filter it out (it's a comment or nested sub-post)
-        if (art.parentElement && art.parentElement.closest('div[role="article"]')) {
+      }
+
+      console.log(`[PostSnag Collector] Raw containers found: ${rawArticles.length}`);
+
+      // Filter out comments and nested child items
+      const articles = rawArticles.filter((art) => {
+        if (art.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"], [data-commentid], ul, ol, form')) {
           return false;
         }
         return true;
       });
+
+      console.log(`[PostSnag Collector] Post containers after filtering: ${articles.length}`);
 
       let newFound = 0;
 
       articles.forEach((art) => {
         try {
           const postData = parsePostElement(art, pageName, pageUrl);
-          if (postData && postData.text && postData.text.length > 10) {
+          if (postData && postData.text && postData.text.length > 5) {
             const key = postData.facebook_url || postData.text;
             if (!collectedPostsMap.has(key)) {
               collectedPostsMap.set(key, postData);
@@ -168,14 +186,25 @@
             }
           }
         } catch (err) {
-          // Safe DOM parse fallback
+          console.warn('[PostSnag Collector] Parse error:', err);
         }
       });
 
       saveToStorage();
       updateWidgetCount();
+
+      if (newFound > 0) {
+        showStatus(`Scanned ${newFound} new post${newFound === 1 ? '' : 's'}!`);
+      } else if (articles.length > 0) {
+        showStatus(`${articles.length} visible post${articles.length === 1 ? '' : 's'} already saved (${collectedPostsMap.size} total)`);
+      } else {
+        showStatus(`No posts detected on screen. Try scrolling.`);
+      }
+
       return newFound;
     } catch (err) {
+      console.error('[PostSnag Collector] scanVisiblePosts error:', err);
+      showStatus('Error scanning page.');
       return 0;
     }
   }
@@ -200,42 +229,91 @@
     }
   }
 
+  function getPostText(art) {
+    if (!art) return '';
+
+    // 1. Check explicit Facebook preview message attributes
+    const priorityEl = art.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
+    if (priorityEl && priorityEl.innerText && priorityEl.innerText.trim().length > 5) {
+      return cleanPostText(priorityEl.innerText);
+    }
+
+    // 2. Scan dir="auto" elements
+    const dirElements = Array.from(art.querySelectorAll('[dir="auto"]'));
+    let candidates = [];
+
+    for (const el of dirElements) {
+      // Exclude comment section
+      if (el.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"], ul, form, [data-commentid]')) {
+        continue;
+      }
+      // Exclude header titles, headings, and timestamps
+      if (el.closest('h1, h2, h3, h4, h5, h6, [role="heading"], abbr, time')) {
+        continue;
+      }
+
+      const t = el.innerText ? el.innerText.trim() : '';
+
+      if (isSystemUiLabel(t)) {
+        continue;
+      }
+
+      if (t.length > 5) {
+        candidates.push(t);
+      }
+    }
+
+    if (candidates.length === 0) {
+      // Fallback scan: all divs or spans not in header/comments
+      const allEls = Array.from(art.querySelectorAll('div, span, p'));
+      for (const el of allEls) {
+        if (el.closest('[aria-label*="Comment"], [aria-label*="comment"], ul, form, h1, h2, h3, h4, h5, h6, abbr, time')) {
+          continue;
+        }
+        const t = el.innerText ? el.innerText.trim() : '';
+        if (t.length > 15 && !isSystemUiLabel(t)) {
+          if (t.length < (art.innerText || '').length * 0.9) {
+            candidates.push(t);
+          }
+        }
+      }
+    }
+
+    if (candidates.length === 0) return '';
+
+    candidates.sort((a, b) => b.length - a.length);
+    return cleanPostText(candidates[0]);
+  }
+
+  function cleanPostText(str) {
+    if (!str) return '';
+    return str.replace(/\.\.\.\s*See\s+more/gi, '').replace(/See\s+More/gi, '').trim();
+  }
+
+  function isSystemUiLabel(str) {
+    if (!str) return true;
+    const s = str.trim().toLowerCase();
+    const uiLabels = [
+      'like', 'comment', 'share', 'send', 'write a comment...', 'write a comment…',
+      'reply', 'view more comments', 'most relevant', 'all comments', 'follow',
+      'sponsored', 'public', 'shared with public', 'see more', 'see original',
+      'rate this translation'
+    ];
+    if (uiLabels.includes(s)) return true;
+    if (/^[0-9.,]+[kkmm]?\s*(comments?|shares?|reactions?|likes?)?$/i.test(s)) return true;
+    return false;
+  }
+
   function parsePostElement(art, pageName, pageUrl) {
     if (!art) return null;
 
     // Post Text
-    let text = '';
-    const priorityEl = art.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
-    if (priorityEl && priorityEl.innerText && priorityEl.innerText.trim().length > 5) {
-      text = priorityEl.innerText.trim();
-    } else {
-      const textEls = Array.from(art.querySelectorAll('[dir="auto"]'));
-      textEls.forEach((el) => {
-        // Skip elements inside comment blocks
-        if (el.closest('[aria-label*="Comment"], [aria-label*="comment"], [aria-label*="Reply"], [aria-label*="reply"], ul, form')) {
-          return;
-        }
-        // Skip header/author titles, action buttons, timestamps
-        if (el.closest('[role="button"], button, h1, h2, h3, h4, h5, h6, [role="heading"], abbr, time')) {
-          return;
-        }
-        // Skip links that are short user names or metadata
-        if (el.closest('a[role="link"]') && (!el.innerText || el.innerText.length < 30)) {
-          return;
-        }
-
-        const candidateText = el.innerText ? el.innerText.trim() : '';
-        if (candidateText.length > text.length) {
-          text = candidateText;
-        }
-      });
-    }
-
+    const text = getPostText(art);
     if (!text || text.length < 5) return null;
 
     // Post URL / Link
     let fbUrl = '';
-    const links = Array.from(art.querySelectorAll('a[href*="/posts/"], a[href*="/permalink.php"], a[href*="pfbid"], a[href*="/videos/"], a[href*="/photos/"], a[href*="/reel/"]'));
+    const links = Array.from(art.querySelectorAll('a[href*="/posts/"], a[href*="/permalink.php"], a[href*="pfbid"], a[href*="/videos/"], a[href*="/photos/"], a[href*="/reel/"], a[href*="/story.php"]'));
     const validLinks = links.filter(link => !link.closest('[aria-label*="Comment"], [aria-label*="comment"], ul, form'));
     const targetLink = validLinks.length > 0 ? validLinks[0] : links[0];
     if (targetLink) {
